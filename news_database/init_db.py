@@ -1,6 +1,6 @@
 from urllib.parse import urljoin, urlparse
 from news_database.news_db import NewsDatabase
-from news_database.utils import get_base_url, get_domain
+from news_database.utils import get_base_url, get_domain, split_rule_text
 import pandas as pd
 import os
 
@@ -40,7 +40,7 @@ METADATA_URLS={
     'https://forbes.es/': {'nombre': 'Forbes'},
     'https://itg.es/': {'nombre': 'ITG centro tecnológico'},
     'https://www.eldia.es/': {'nombre': 'El Dia'},
-    'https://www.nationalgeographic.es/': {'nombre': 'Historia National Geographic'},
+    'https://www.nationalgeographic.com.es/': {'nombre': 'Historia National Geographic'},
     'https://iymagazine.es/': {'nombre': 'IyMagazine'},
     'https://www.lacerca.com/': {'nombre': 'La Cerca'},
     'https://www.tribunaavila.com/': {'nombre': 'Tribuna de Ávila'},
@@ -170,43 +170,78 @@ def get_news_sources_information():
 
     return sitemap_data, fuentes_data, fuentes_sitemap_data
 
+
 def initialize_news_sources(news_db):
     sitemap_data, fuentes_data, fuentes_sitemap_data = get_news_sources_information()
     news_db.bulk_insert_sitemap(sitemap_data)
     news_db.bulk_insert_fuentes(fuentes_data)
     news_db.bulk_insert_fuentes_sitemap(fuentes_sitemap_data)
+    print(f"Se insertaron {len(fuentes_data)} fuentes correctamente.")
+    
 
-
-def initialize_keywords_db(ruta_excel, news_db):
-
+def initialize_keywords_categories_rules_db(ruta_excel, news_db):
     palabras_clave_df = pd.read_excel(ruta_excel)
 
     lista_categorias = list(palabras_clave_df.columns)
 
-    # Obtener palabras por categórias
+    # Obtener palabras por categorías y reglas
+    reglas = set()
     palabras_clave = set()
     palabras_clave_categoria = {}
+    regla_keywords_map = {}  # {regla: [(palabra, operador, posicion), ...]}
+
     for categoria in lista_categorias:
-        palabras_categoria = set(palabras_clave_df[categoria].dropna())
-        palabras_clave.update(palabras_categoria)
+        reglas_categoria = set(palabras_clave_df[categoria].dropna())
+        reglas.update(reglas_categoria)
+
+        palabras_categoria = set()
+        for regla in reglas_categoria:
+            palabras_clave_regla, operator = split_rule_text(regla)
+            palabras_clave.update(set(palabras_clave_regla))
+
+            # Map keywords to rule with position and operator
+            if regla not in regla_keywords_map:
+                regla_keywords_map[regla] = []
+            for pos, palabra in enumerate(palabras_clave_regla, 1):
+                regla_keywords_map[regla].append((palabra, operator if operator is not None else '-', pos))
+
+            if operator == 'o':
+                palabras_categoria.update(palabras_clave_regla)
+            else:
+                # La primera palabra es la asignada a la categoria (AND case)
+                # Tambien funciona para palabras clave solas
+                palabra_clave_principal = palabras_clave_regla[0]
+                palabras_categoria.add(palabra_clave_principal)
+
         palabras_clave_categoria[categoria] = list(palabras_categoria)
 
-    # Insertar categórias y palabras clave en base de datos
+    # Insertar categorías y palabras clave en base de datos
     news_db.bulk_insert_categorias(lista_categorias)
-    news_db.bulk_insert_palabras_clave(palabras_clave)
+    news_db.bulk_insert_palabras_clave_stem(palabras_clave)
 
     # Insertar relación palabras clave y categorías
     for categoria, palabras in palabras_clave_categoria.items():
         if len(palabras) == 0:
             continue
         categoria_id = news_db.get_category(categoria)
-        palabras_clave_ids = news_db.get_keyword_ids(palabras)
-        lista_categoria_palabra = [ (ids_tupla[0], categoria_id)  for ids_tupla in palabras_clave_ids]
+        palabras_clave_ids = news_db.get_keyword_ids_stemmed(palabras)
+        lista_categoria_palabra = [(ids_tupla, categoria_id) for ids_tupla in palabras_clave_ids if ids_tupla]
         news_db.bulk_insert_palabra_clave_categorias(lista_categoria_palabra)
+
+    print(f"Se insertaron {len(palabras_clave)} palabras clave y {len(palabras_clave_categoria)} categorias correctamente.")
+
+    # Insertar reglas
+    news_db.bulk_insert_regla(reglas)
+    print(f"Se insertaron {len(reglas)} reglas correctamente.")
+
+    # Insertar relaciones regla-palabras_clave
+    for regla, keyword_list in regla_keywords_map.items():
+        news_db.associate_rule_keywords(regla, keyword_list)
+    print(f"Se asociaron reglas con {sum(len(kw) for kw in regla_keywords_map.values())} keywords.")
 
 
 if __name__ == "__main__":
-    
+
     # Obtener ruta absoluta del directorio donde está el script
     base_dir = os.path.dirname(os.path.abspath(__file__))
     # Construir ruta absoluta al archivo Excel en la misma carpeta
@@ -222,6 +257,8 @@ if __name__ == "__main__":
     initialize_news_sources(news_db)
 
     # Inicializar palabras clave y categorias
-    initialize_keywords_db(ruta_excel, news_db)
+    initialize_keywords_categories_rules_db(ruta_excel, news_db)
 
     news_db.close_db()
+
+    print(f"Se inicializó correctamente la base de datos")

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime,date, timedelta
-from news_database.utils import get_domain
+from news_database.utils import get_domain, split_rule_text
 from urllib.parse import urlparse, urlunparse
 from thefuzz import fuzz
 import subprocess
@@ -12,10 +12,19 @@ from datetime import datetime
 from datetime import time as dt_time
 import queue
 import urllib.parse
+import re
+# Cargar modelo de spaCy para español
 from unidecode import unidecode
-import spacy
-from nltk.stem import WordNetLemmatizer
-APP_URL = "http://156.35.163.135:80"
+from nltk.stem.snowball import SnowballStemmer
+#import spacy
+
+# Inicializar
+stemmer = SnowballStemmer("spanish")
+
+#nlp_fast = spacy.load("es_core_news_sm")
+#nlp_fast.disable_pipes("ner", "parser")
+
+APP_URL = "http://156.35.163.135:80"#"https://localhost:8508"
 
 #-------- Scrapy tab ---------
 LOG_FILE = "news_scraper/output.log"
@@ -82,35 +91,82 @@ def remove_url_fragment(url):
     parsed_url = urlparse(url)
     return urlunparse(parsed_url._replace(fragment=''))
 
-# Cargar modelo de spaCy para español
-nlp = spacy.load("es_core_news_sm")
 
-def normalize_title(title: str) -> str:
+'''
+# Lematizacion
+def preprocesar_titulos(titulos_list, batch_size=100):
     """
-    Normaliza un título en español:
-    - Pasa a minúsculas
-    - Elimina acentos
-    - Lematiza las palabras
+    Normaliza título en español:
+    - Minúsculas y elimina acentos
+    - Elimina puntuación
+    - Elimina stopwords, espacios
+    - Lematizacion por lotes
     """
-    # Preprocesamiento básico
-    title = unidecode(title.lower().strip())
+    clean_titles = []
+    for title in titulos_list:
+        title = unidecode(title.lower().strip())
+        title = re.sub(r'[^\w\s]', ' ', title)  # Remover puntuación
+        clean_titles.append(title)
 
-    # Procesar con spaCy
-    doc = nlp(title)
+	  # Batch processing
+    titulos_norm_list = []
+    for i in range(0, len(clean_titles), batch_size):
+        batch = clean_titles[i:i+batch_size]
+        docs = list(nlp_fast.pipe(batch, batch_size=batch_size))
+        for doc in docs:
+            lemmas = [token.lemma_.lower() for token in doc 
+                     if not token.is_punct and not token.is_space 
+                     and not token.is_stop and not token.like_num 
+                     and token.lemma_.strip()]
+            titulos_norm_list.append(" ".join(lemmas))
+    
+    return titulos_norm_list
+'''
 
-    # Lematizar y recomponer
-    lemmas = [token.lemma_ for token in doc if not token.is_punct and not token.is_space]
 
-    return " ".join(lemmas)
+def preprocesar_titulos(titulos_list):
+    """
+    Normaliza título en español:
+    - Minúsculas y elimina acentos
+    - Elimina puntuación
+    - Elimina palabras con pocos caracteres
+    - Elimina stopwords
+    - Stemming
+    """
+    stopwords = {'el', 'la', 'de', 'que', 'y', 'en', 'del', 'a', 'se', 'no', 
+                'directo', 'urgente', 'última', 'hora', 'breaking', 'los', 'las'}
+    
+    titulos_norm_list = []
+    for title in titulos_list:
+        # Limpieza básica
+        title = unidecode(title.lower().strip()) # Normaliza caracteres
+        title = re.sub(r'[^\w\s]', ' ', title)   # Elimina puntuacion 
+        words = re.findall(r'\b[a-z]{3,}\b', title) # Extrae palabras >= 3
+        
+        # Stemming
+        stemmed_words = [stemmer.stem(w) for w in words if w not in stopwords]
+        titulos_norm_list.append(' '.join(stemmed_words))
+    
+    return titulos_norm_list
 
-def agrupar_similares(articulos, umbral=60):
+
+def agrupar_similares(articulos, umbral=70):
+    # ordenar articulos por titulo para encontrar mas rapido los similares
+    #articulos = articulos.sort_values('Titulo').reset_index(drop=True)
+    articulos = articulos.sort_values(['Fecha de Publicación', 'Titulo'], ascending=[False, True]).reset_index(drop=True)
+
+    titulos_list = articulos['Titulo'].tolist()
+    titulos_norm_list = preprocesar_titulos(titulos_list)
+    titulos_norm = {idx: titulos_norm_list[idx] for idx in articulos.index}
+    
+    # Agrupamiento
     grupos = []
-    for index, art in articulos.iterrows():
+    for index, titulo_norm in titulos_norm.items():
+        art = articulos.loc[index]
         agregado = False
-        titulo_normalizado = normalize_title(art['Titulo'])
         for grupo in grupos:
-            titulo_grupo_normalizado = normalize_title(grupo[0]['Titulo'])
-            score = fuzz.token_set_ratio(titulo_normalizado, titulo_grupo_normalizado)
+            primer_norm = titulos_norm[grupo[0].name]
+            score = fuzz.token_set_ratio(titulo_norm, primer_norm)
             if score >= umbral:
                 grupo.append(art)
                 agregado = True
@@ -118,6 +174,7 @@ def agrupar_similares(articulos, umbral=60):
         if not agregado:
             grupos.append([art])
     return grupos
+
 
 def mostrar_articulos_con_grupos(articulos, umbral=80):
     articulos = pd.DataFrame(articulos, columns=['Titulo', 'URL', 'Fuente', 'Fecha de Publicación'])
@@ -281,13 +338,13 @@ def search_articles_filter(news_db):
             selected_keywords = st.multiselect("",
                                                options=keywords,
                                                key="selected_keywords",
-                                               label_visibility ="collapsed")   
+                                               label_visibility ="collapsed")
 
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input('Fecha de inicio', value=default_start_date) 
+        start_date = st.date_input('Fecha de inicio', value=default_start_date)
     with col2:
-        end_date = st.date_input('Fecha de fin', value=default_end_date) 
+        end_date = st.date_input('Fecha de fin', value=default_end_date)
     start_datetime = datetime.combine(start_date, dt_time.min)
     end_datetime = datetime.combine(end_date, dt_time.min) + timedelta(days=1)
     start_iso = start_datetime.strftime('%Y-%m-%d %H:%M:%S') if start_datetime else None
@@ -481,7 +538,8 @@ def manage_keywords(news_db):
             else:
                 st.info("No hay palabras clave creadas aún.")
 
-        new_keyword = st.text_input("Agregar nueva palabra clave")
+        #new_keyword = st.text_input("Agregar nueva palabra clave")
+        new_keyword = st.text_input("Agregar nueva palabra clave (ej: 'A', 'A + B + C', 'A or B or C')")
         if st.button("Agregar palabra clave"):
             if not new_keyword.strip():
                 st.warning("Debe ingresar una palabra clave válida.")
@@ -489,8 +547,39 @@ def manage_keywords(news_db):
                 st.warning("La palabra clave ya existe.")
             else:
                 try:
-                    news_db.add_keyword(new_keyword.strip())
-                    st.success(f"Palabra clave '{new_keyword}' agregada correctamente.")
+                    regla = new_keyword.strip()
+                    palabras_clave_regla, operator = split_rule_text(regla)
+
+                    or_operator = ' o ' in regla
+                    and_operator = '+' in regla
+                    if or_operator and and_operator:
+                      st.warning("No se pueden combinar operadores '+' con ' o ' en la palabra clave")
+                      return
+
+                    if len(palabras_clave_regla) == 1:
+                        news_db.add_keyword_stem(palabras_clave_regla[0])
+                        st.success(f"Palabra clave '{palabras_clave_regla[0]}' agregada correctamente.")
+                    else:
+                        resultado = news_db.bulk_insert_palabras_clave_stem(palabras_clave_regla)
+                        if resultado['total_insertadas'] > 0:
+                            st.success(f"**{resultado['total_insertadas']}** nuevas palabras clave insertadas")
+                            for p in resultado['insertadas']:
+                                st.write(f"• {p}")
+
+                        if resultado['total_duplicadas'] > 0:
+                            st.info(f"**{resultado['total_duplicadas']}** palabras clave ya existen")
+                            for p in resultado['duplicadas']:
+                                st.write(f"• {p}")
+
+                    # Agregar regla
+                    news_db.add_regla(regla)
+
+                    # Asociar palabras clave a regla con operador y posicion
+                    keyword_pairs = [(kw, operator if operator is not None else '-', pos)
+                                     for pos, kw in enumerate(palabras_clave_regla, 1)]
+                    news_db.associate_rule_keywords(regla, keyword_pairs)
+                    #st.success(f"Regla '{regla}' agregada con {len(palabras_clave_regla)} palabras clave.")
+
                     time.sleep(2)
                     st.rerun()
                 except ValueError as ve:
@@ -513,7 +602,8 @@ def manage_keywords(news_db):
                 else:
                     try:
                         for cat in cats_to_associate:
-                            news_db.associate_keyword_category(kw_to_associate, cat)
+                            news_db.associate_keyword_stem_category(kw_to_associate, cat)
+                            #news_db.associate_keyword_category(kw_to_associate, cat)
                         st.success(f"Palabra clave '{kw_to_associate}' asociada a las categorías seleccionadas.")
                         time.sleep(2)
                         st.rerun()
@@ -539,7 +629,7 @@ def manage_keywords(news_db):
                             kw_to_remove = st.selectbox("Seleccionar palabra clave para eliminar asociación", options=keywords, key="remove_assoc_kw")
                             if st.button("Eliminar asociación"):
                                 try:
-                                    news_db.remove_keyword_from_category(kw_to_remove, selected_cat)
+                                    news_db.remove_keyword_stem_from_category(kw_to_remove, selected_cat)
                                     st.success(f"Asociación de '{kw_to_remove}' con '{selected_cat}' eliminada.")
                                     time.sleep(2)
                                     st.rerun()
@@ -555,7 +645,7 @@ def manage_keywords(news_db):
                 kw_to_delete = st.selectbox("Seleccionar palabra clave para eliminar", options=all_keywords, key="delete_kw")
                 if st.button("Eliminar palabra clave completa"):
                     try:
-                        news_db.delete_keyword(kw_to_delete)
+                        news_db.delete_keyword(kw_to_delete.strip())
                         st.success(f"Palabra clave '{kw_to_delete}' eliminada completamente.")
                         time.sleep(2)
                         st.rerun()

@@ -4,7 +4,7 @@ INVALID_URL_WORDS = {
     'categories', 'video', 'image', 'temas', 'live', 'microsite', 'focus', 'blog',
     'ocio', 'cine', 'board', 'character', 'galeria', 'categoria', 'ficha',
     'firmante', 'secciones', 'hemeroteca', 'landing', 'sorteo', 'elecciones',
-    'autor', 'hilos', 'cartelera'
+    'autor', 'hilos', 'cartelera', 'archive'
 }
 
 # Namespaces para el parsing de sitemaps

@@ -1,6 +1,5 @@
 newspaper3k==0.2.8
 Scrapy==2.13.3
-torch==2.8.0+cu126
 transformers==4.57.1
 sentence-transformers==5.1.1
 langchain==1.0.2
@@ -14,3 +13,6 @@ lxml_html_clean==0.4.3
 streamlit==1.50.0
 streamlit-authenticator==0.4.2
 thefuzz==0.22.1
+unidecode
+spacy
+https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.7.0/es_core_news_sm-3.7.0-py3-none-any.whl

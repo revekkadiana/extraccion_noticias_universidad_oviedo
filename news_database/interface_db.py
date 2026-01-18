@@ -1,20 +1,14 @@
-import sqlite3
+from news_database.core_db import NewsCoreDatabase
+from news_database.utils import get_domain
 
-class NewsInterfaceDatabase:
+class NewsInterfaceDatabase(NewsCoreDatabase):
     ALL_OPTION = "Todas"
 
-    def __init__(self, db_path='news.db'):
-        self.db_path = db_path
-        self.conn = None
-
     def __enter__(self):
-        self.conn = sqlite3.connect(self.db_path)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.conn:
-            self.conn.commit()
-            self.conn.close()
+        self.close_db()
 
     # --- Consultas básicas ---
     def fetch_categories(self):
@@ -164,7 +158,6 @@ class NewsInterfaceDatabase:
         """, (fuente_id, url_relativa))
         self.conn.commit()
 
-
     def get_sitemaps_by_source_id(self, fuente_id):
         cursor = self.conn.cursor()
         query = """
@@ -176,7 +169,6 @@ class NewsInterfaceDatabase:
         """
         cursor.execute(query, (fuente_id,))
         return [row[0] for row in cursor.fetchall()]
-
 
     def remove_keyword_from_category(self, palabra, categoria):
         cursor = self.conn.cursor()
@@ -212,6 +204,114 @@ class NewsInterfaceDatabase:
 
     def delete_keyword(self, palabra):
         cursor = self.conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON;") 
+        cursor.execute("PRAGMA foreign_keys = ON;")
         cursor.execute("DELETE FROM palabras_clave WHERE palabra = ?", (palabra,))
+        self.conn.commit()
+
+
+    def add_regla(self, regla):
+        cursor = self.conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO reglas (descripcion) VALUES (?)', (regla.strip(),))
+        self.conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"La regla '{regla}' ya existe.")
+
+    def exist_regla(self, regla):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT 1 FROM reglas WHERE descripcion = ?', (regla,))
+        return cursor.fetchone() is not None
+
+
+    ## Uso de stemming
+    def add_keyword_stem(self, palabra):
+        """Agrega palabra clave verificando stem único."""
+        stem = self.get_stem(palabra.strip().lower())
+        cursor = self.conn.cursor()
+
+        # Verificar si ya existe stem
+        cursor.execute("SELECT palabra_id FROM palabras_clave WHERE stem = ?", (stem,))
+        existing = cursor.fetchone()
+
+        if existing:
+            raise ValueError(f"La palabra clave '{palabra}' o alguna de sus variaciones ya existe.")
+            #return existing[0]  # Retorna ID existente
+
+        # Insertar nuevo
+        cursor.execute("""
+            INSERT OR IGNORE INTO palabras_clave (palabra, stem)
+            VALUES (?, ?)
+        """, (palabra, stem))
+
+        self.conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"La palabra clave '{palabra}' ya existe.")
+
+
+    def bulk_insert_palabras_clave_stem(self, palabras_originales):
+        """
+        Inserta palabras clave únicas por stem.
+
+        Returns:
+            dict: {
+                'insertadas': [lista_palabras_nuevas],
+                'duplicadas': [lista_palabras_que_ya_existian],
+                'total_insertadas': int,
+                'total_duplicadas': int
+            }
+        """
+        cursor = self.conn.cursor()
+
+        # Obtener stems existentes
+        cursor.execute("SELECT stem FROM palabras_clave WHERE stem IS NOT NULL")
+        stems_existentes = {row[0] for row in cursor.fetchall()}
+
+        insertadas = []
+        duplicadas = []
+
+        for palabra in set(palabras_originales):
+            stem = self.get_stem(palabra.strip().lower())
+            if stem and stem not in stems_existentes:
+                cursor.execute("""
+                    INSERT INTO palabras_clave (palabra, stem) VALUES (?, ?)
+                """, (palabra.strip(), stem))
+                insertadas.append(palabra)
+            elif stem:
+                duplicadas.append(palabra)
+
+        self.conn.commit()
+
+        return {
+            'insertadas': insertadas,
+            'duplicadas': duplicadas,
+            'total_insertadas': len(insertadas),
+            'total_duplicadas': len(duplicadas)
+        }
+
+
+    def associate_keyword_stem_category(self, palabra, categoria):
+        cursor = self.conn.cursor()
+        stem = self.get_stem(palabra.strip().lower())
+        cursor.execute("SELECT palabra_id FROM palabras_clave WHERE stem = ?", (stem,))
+        palabra_id = cursor.fetchone()
+        cursor.execute("SELECT categoria_id FROM categoria WHERE nombre = ?", (categoria,))
+        categoria_id = cursor.fetchone()
+        if palabra_id and categoria_id:
+            cursor.execute("""
+                INSERT OR IGNORE INTO palabras_clave_categoria (palabra_id, categoria_id)
+                VALUES (?, ?)
+            """, (palabra_id[0], categoria_id[0])) #(palabra_id['palabra_id'], categoria_id['categoria_id']))
+            self.conn.commit()
+        else:
+            raise ValueError("Palabra o categoría no encontrada")
+
+
+    def remove_keyword_stem_from_category(self, palabra, categoria):
+        cursor = self.conn.cursor()
+        stem = self.get_stem(palabra.strip().lower())
+        query = """
+            DELETE FROM palabras_clave_categoria
+            WHERE palabra_id = (SELECT palabra_id FROM palabras_clave WHERE stem = ?)
+              AND categoria_id = (SELECT categoria_id FROM categoria WHERE nombre = ?)
+        """
+        cursor.execute(query, (stem, categoria))
         self.conn.commit()

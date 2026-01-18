@@ -14,7 +14,8 @@ class ChromaVectorEngine(VectorDatabase):
         self.index = Chroma(
             collection_name='news_collection',
             embedding_function=self.embedding,
-            persist_directory=persist_directory
+            persist_directory=persist_directory,
+            collection_metadata={"hnsw:space": "cosine"}
         )
 
     def insert_embeddings_bulk(self, chunks_with_vectors: List[Tuple[List[float], Dict]]):
