@@ -9,4 +9,4 @@ credentials:
 cookie:
   name: my_news_app_cookie
   key: some_random_signature_key_12345
-  expiry_days: 30
+  expiry_days: 0

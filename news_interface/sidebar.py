@@ -17,6 +17,7 @@ def display_sidebar(authenticator):
 
         if not st.session_state['show_admin_login']:
             if st.sidebar.button("Acceso a Admin"):
+                st.session_state['authentication_status'] = None
                 st.session_state['show_admin_login'] = True
                 st.session_state['admin_logged_in'] = False
                 st.rerun()
@@ -33,7 +34,7 @@ def display_sidebar(authenticator):
                     st.sidebar.error("No tienes permisos de administrador")
                     #authenticator.logout()
                     #st.session_state['authentication_status'] = None
-                    st.session_state['show_admin_login'] = False
+                    #st.session_state['show_admin_login'] = False
                     authenticator.logout()
                     st.rerun()
 
@@ -50,8 +51,8 @@ def display_sidebar(authenticator):
     else:
         st.sidebar.success(f"Sesión de administrador activa: {st.session_state.get('name')}")
         if st.sidebar.button("Cerrar sesión de administrador"):
-            st.session_state['admin_logged_in'] = False
-            st.session_state['show_admin_login'] = False
+            #st.session_state['admin_logged_in'] = False
+            #st.session_state['show_admin_login'] = False
             authenticator.logout()
             st.rerun()
 

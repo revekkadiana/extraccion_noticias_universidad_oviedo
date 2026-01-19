@@ -20,6 +20,14 @@ class Authenticator:
 
     def logout(self):
         self.authenticator.logout(location='sidebar')
+        
+        # limpiar estados
+        keys_to_clear = ['admin_logged_in', 'show_admin_login', 
+                         'authentication_status', 'username', 
+                         'name', 'logout', 'roles', 'init']
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
 
     def get_user_role(self):
         username = st.session_state.get('username')

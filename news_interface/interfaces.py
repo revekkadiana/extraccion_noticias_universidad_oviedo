@@ -17,9 +17,12 @@ import re
 from unidecode import unidecode
 from nltk.stem.snowball import SnowballStemmer
 #import spacy
+import nltk
+nltk.download('stopwords', quiet=True)
 
 # Inicializar
 stemmer = SnowballStemmer("spanish")
+stop_words = set(nltk.corpus.stopwords.words('spanish'))
 
 #nlp_fast = spacy.load("es_core_news_sm")
 #nlp_fast.disable_pipes("ner", "parser")
@@ -34,7 +37,7 @@ def run_scrapy_and_log(q):
     start_time = datetime.now()
     with open(LOG_FILE, "w", encoding="utf-8") as log_file:
         #cmd = ["scrapy", "crawl", "news_extractor", "-L", "DEBUG", "-s", "ROBOTSTXT_OBEY=False"]
-        cmd = ["scrapy", "crawl", "news_extractor", "-s", "LOG_ENABLED=False", "-s", "ROBOTSTXT_OBEY=False"]
+        cmd = ["scrapy", "crawl", "news_extractor", "-s", "LOG_ENABLED=False", "-s", "ROBOTSTXT_OBEY=True"]
         process = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT, text=True)
         process.wait()
     end_time = datetime.now()
@@ -133,9 +136,6 @@ def preprocesar_titulos(titulos_list):
     - Elimina stopwords
     - Stemming
     """
-    stopwords = {'el', 'la', 'de', 'que', 'y', 'en', 'del', 'a', 'se', 'no', 
-                'directo', 'urgente', 'última', 'hora', 'breaking', 'los', 'las'}
-    
     titulos_norm_list = []
     for title in titulos_list:
         # Limpieza básica
@@ -144,7 +144,7 @@ def preprocesar_titulos(titulos_list):
         words = re.findall(r'\b[a-z]{3,}\b', title) # Extrae palabras >= 3
         
         # Stemming
-        stemmed_words = [stemmer.stem(w) for w in words if w not in stopwords]
+        stemmed_words = [stemmer.stem(w) for w in words if w not in stop_words]
         titulos_norm_list.append(' '.join(stemmed_words))
     
     return titulos_norm_list
@@ -419,7 +419,7 @@ def semantic_search_articles(news_db, search_manager):
 
     with col_top_k:
         options = [5, 10, 20, 30]
-        top_k = st.selectbox("", options=options, index=default_top_k_index, label_visibility="hidden")
+        top_k = st.selectbox("Resultados", options=options, index=default_top_k_index, label_visibility="hidden")
         selected_index = options.index(top_k)
 
     col1, col2 = st.columns(2)
@@ -480,7 +480,7 @@ def manage_categories(news_db):
     with st.expander("Ver categorías existentes"):
         if categories:
             df_categories = pd.DataFrame({'Nombre de Categoría': categories})
-            st.dataframe(df_categories, hide_index=True, use_container_width=True)
+            st.dataframe(df_categories, hide_index=True, width="stretch")#use_container_width=True)
         else:
             st.info("No hay categorías creadas aún.")
 
@@ -534,7 +534,7 @@ def manage_keywords(news_db):
         with st.expander("Ver palabras clave existentes"):
             if all_keywords:
                 df_keywords = pd.DataFrame({'Palabra Clave': all_keywords})
-                st.dataframe(df_keywords, hide_index=True, use_container_width=True)
+                st.dataframe(df_keywords, hide_index=True, width="stretch")#use_container_width=True)
             else:
                 st.info("No hay palabras clave creadas aún.")
 
@@ -763,7 +763,7 @@ def manage_sitemaps(news_db):
     if mapas:
         import pandas as pd
         df_mapas = pd.DataFrame(mapas, columns=['URL Relativa'])
-        st.dataframe(df_mapas, use_container_width=True)
+        st.dataframe(df_mapas, width="stretch")#use_container_width=True)
     else:
         st.info("No hay mapas de sitio asociados a esta fuente.")
 
